@@ -35,7 +35,6 @@
  */
 #include "KeyMouse.h"
 
-#define FOODLY 0
 
 TFT_eSPI tft = TFT_eSPI();            // Invoke custom library
 TFT_eSprite spr = TFT_eSprite(&tft);  // Sprite 
@@ -99,10 +98,12 @@ class BleKeyEventCallback: public BLECharacteristicCallbacks {
 
 
 /************** Hardware Events ****************************/
+// INPUT_PULLUP Mode
 bool isPressed(int x){
   return (x == LOW);
 }
 
+/// for 5 states joystick of WioTerminal
 enum button_state{
   NONE_STATE=-1, LEFT_STATE=0, RIGHT_STATE, DOWN_STATE, UP_STATE, PUSH_STATE
 };
@@ -124,6 +125,7 @@ int get_joystick_state()
   }
 }
 
+//  for Upper buttons
 #define LEFT_BUTTON     0x01
 #define MIDDLE_BUTTON   0x02
 #define RIGHT_BUTTON    0x04
@@ -136,67 +138,25 @@ unsigned char get_button_state()
   return res;
 }
 
-/* messages */
+/* Default messages */
 static const char *ble_state_str[] = { "[[ BLE Disconnected ]]", "[[ BLE Connected ]]" };
 
-#if FOODLY
-/*--------- for foodly mode ------------*/
-int foodly_rl_mode = 0;
-int foodly_rot_mode = 0;
-int arm_control_mode = 0;
-int key_pressed = 0;
-int foodly_menu_mode=0;
-
-enum motion{
-  M_LEFT = 0, M_RIGHT, M_BACK, M_FRONT,  M_DOWN, M_UP,
-  ROLL_M,     ROLL_P,  PITCH_M, PITCH_P, YAW_M,  YAW_P,
-  DISHER, END_MOTION
-};
-
-static char arm_motion[]= { 'a', 'f', 's', 'd', 'z', 'x',       // left move
-                            'q', 'w', 'e', 'r', 'Q', 'W', 't',  // left ratate, disher
-                            'h', 'l', 'j', 'k', ',', '.',       // right move
-                            'o', 'p', 'u', 'i', 'U', 'I', 'y'}; // right rotate, disher
-
-char get_command(int v)
-{
-  return arm_motion[foodly_rl_mode * END_MOTION + v];
-}
-
-int get_motion_index(int idx)
-{
-  int value = -1;
-
-  switch(idx){
-    case M_LEFT:
-    case M_RIGHT:
-       value = idx + foodly_rot_mode * 6;
-       break;
-    case M_BACK:
-    case M_FRONT:
-       value = idx + arm_control_mode * 2 + foodly_rot_mode * 6;
-       break;
-  }
-  return value;
-}
-
-int toggle_value(int *v){
-  *v = (*v + 1) % 2;
-}
-
-#endif
-
+//// for SD card message file
 char msg_file[] = "message.txt"; 
 int ready_sd = 0;
 auto msg_item_list = std::vector<std::string>();
 auto msg_list = std::vector<std::string>();
 auto menu_list = std::vector<std::string>();
-auto command_list = std::vector<std::string>();
 
 int selected_node = 0;
-int nlist = 0;  
+int nlist = 0;
+int selected_page = 0;
+int npage = 1;
 
-LIS3DHTR<TwoWire> lis;
+#if 0
+/// for 3-axis acceleromater inside WioTerminal
+LIS3DHTR<TwoWire> accelerometer;
+#endif
 
 /////////////////////////////// Initialize
 void setup() {
@@ -229,26 +189,14 @@ void setup() {
   // Menu
   menu_list.push_back("Mouse mode");
   menu_list.push_back("Keyboard mode");
-  
-#if FOODLY
-  menu_list.push_back("Foodly mode");
 
-  command_list.push_back("=");
-  command_list.push_back("H");
-  command_list.push_back("K");
-  command_list.push_back("C");
-  command_list.push_back("<");
-  command_list.push_back(">");
-  command_list.push_back(" ");
-#endif
   // initialize mouse control:
   Mouse.begin();
 
   // initalize Keyboard
-  //BootKeyboard.begin();
   Keyboard.begin();
   
-  // Initialize BLE for remote keyboard
+  //-------- Initialize BLE for remote keyboard
   BLEDevice::init("Remote Keyboard Service");
  
   // Create the BLE Server
@@ -277,13 +225,14 @@ void setup() {
   // Start advertising
   pServer->getAdvertising()->start();
 
-  //
-  lis.begin(Wire1);
-  lis.setOutputDataRate(LIS3DHTR_DATARATE_25HZ); 
-  lis.setFullScaleRange(LIS3DHTR_RANGE_2G);
-  
+#if 0
+  //------ Setup 3-axis accelerometer
+  accelerometer.begin(Wire1);
+  accelerometer.setOutputDataRate(LIS3DHTR_DATARATE_25HZ); 
+  accelerometer.setFullScaleRange(LIS3DHTR_RANGE_2G);
+#endif
 }
-//----- Key
+
 
 ///////////////////////////////// Main Loop
 void loop() {
@@ -326,19 +275,15 @@ void loop() {
     if(button_state == LEFT_BUTTON  ){
       switch(joystick_state){
         case UP_STATE:
-          //KeyPress(KEY_UP_ARROW);
           Keyboard.write(KEY_UP_ARROW);
           break;
         case DOWN_STATE:
-          //KeyPress(KEY_DOWN_ARROW);
           Keyboard.write(KEY_DOWN_ARROW);
           break;
         case LEFT_STATE:
-          //KeyPress(KEY_LEFT_ARROW);
           Keyboard.write(KEY_LEFT_ARROW);
           break;
         case RIGHT_STATE:
-          //KeyPress(KEY_RIGHT_ARROW);
           Keyboard.write(KEY_RIGHT_ARROW);
           break;          
       }
@@ -354,7 +299,7 @@ void loop() {
            break;
            
         case LEFT_STATE:
-           KeyPress2(0x08);
+           Keyboard.write(KEY_BACKSPACE);
            break;
            
         case RIGHT_STATE:
@@ -372,12 +317,11 @@ void loop() {
 
     /*------- Display ----*/
     showTitle("Keyboard Mode", 0);
-
     drawTextMsg(ble_state_str[deviceConnected], 0, 0, 9);
-    
+  
     // show string list
     showMenuItems(msg_item_list, selected_node);
-    drawTextMsg("=[CR]=", nlist+1,  (selected_node == nlist), 0);
+    //drawTextMsg("=[CR]=", nlist+1,  (selected_node == nlist), 0);
     flushDisplay();
 
     if (ready_sd == 0){
@@ -388,117 +332,6 @@ void loop() {
     showInfoMessage(msg,0);
     responseDelay += 120;
 
-#if FOODLY   
-  } else if (state_config  == FOODLY_MODE) {
-    //// Foodly Control with keyinput.
-     char *rl_mode_str[] = {"Left", "Right" };
-     char *arm_ctrl_str[] = { "[X-Y]", "[Y-X]" };
-     char *rot_mode_str[] = { " Move", " Rot" };
-
-    //-------- Change Mode 
-    ///-- 3-Axis Sensor
-    float acc[3], roll, pitch;
-
-    
-    
-    lis.getAcceleration(&acc[0], &acc[1], &acc[2]);
-    get_angle_from_acc(acc, &roll, &pitch);
-
-    if (arm_control_mode == 0 && pitch > 70){
-      arm_control_mode = 1;
-    }else if (arm_control_mode == 1 && pitch < 30){
-      arm_control_mode = 0;
-    }
-
-    //--- Button
-    responseDelay = 50;
-    if ( button_state == LEFT_BUTTON ) {
-      if (foodly_rl_mode == 0){ toggle_value(&foodly_rot_mode); }
-      foodly_rl_mode = 0;
-      
-    } else if (button_state == RIGHT_BUTTON ) {
-      if (foodly_rl_mode == 1){ toggle_value(&foodly_rot_mode); }
-      foodly_rl_mode = 1;
-      
-    } else if (button_state == MIDDLE_BUTTON ) {
-      toggle_value(&foodly_menu_mode);   
-    }else{
-      responseDelay = 5;
-    }
-
-    char key = 0;
- 
-    //------ Display
-    showTitle("Foodly Mode", 0);
-    
-    drawTextMsg(rl_mode_str[foodly_rl_mode], 0, 1, 9);
-    drawTextMsg2(rot_mode_str[foodly_rot_mode], 4, 0, foodly_rot_mode);
-    drawTextMsg2(arm_ctrl_str[arm_control_mode], 8, 0, arm_control_mode);
-      
-    if (foodly_menu_mode == 1){
-      int cmd_list_len = command_list.size();
-      showMenuItems2(command_list, selected_node, 2, 10);
-
-      switch(joystick_state){
-        case PUSH_STATE:
-           if(command_list.size() > selected_node){
-             if(command_list[selected_node] == "="){
-               key = get_command(DISHER);
-             }else{
-               outputString(command_list[selected_node]);
-             }
-           }
-           break;
-        case LEFT_STATE:
-        case RIGHT_STATE:
-           selected_node += xDistance/2;
-           if (selected_node < 0)    { selected_node = 0;    }
-           if (selected_node >= cmd_list_len){ selected_node = cmd_list_len-1; }
-           responseDelay = 100;
-           break;           
-        case UP_STATE:
-        case DOWN_STATE:
-           selected_node += yDistance/2;
-           if (selected_node < 0)    { selected_node = 0;    }
-           if (selected_node >= cmd_list_len){ selected_node = cmd_list_len-1; }
-           responseDelay = 100;
-           break;
-           
-        default:
-           key_pressed = 0;
-           break;
-      }
-
-    }else{
-      if (joystick_state == NONE_STATE){
-        key_pressed = 0;
-      }else if(joystick_state == PUSH_STATE){
-        key = ' ';
-        drawTextMsg("Record Current Pos", 3, 0, 0); 
-      }else{ 
-        key = get_command(get_motion_index(joystick_state));
-      }
-
-   }
-
-    ///  Press keyboard
-    if (key > 0 && key_pressed == 0){
-      KeyPress2(key);
-      key_pressed = 1;
-    }
-
-    //-------------- Flush display
-    flushDisplay();
-
-    if (key > 64){
-      sprintf(msg, "Mode: %d === %c ===", foodly_rl_mode, key);
-    }else{
-      sprintf(msg, "Roll:%3.1f, Pitch: %3.1f", roll, pitch);
-    }
-    showInfoMessage(msg,0);
-
-    responseDelay += 100;
-#endif
 
   } else if (state_config == CONFIG_MODE) {
     //// Configuration Mode
@@ -518,6 +351,7 @@ void loop() {
     responseDelay = 120;
   }
   
+  /////----- for all mode 
   if (isPressed(buttonLeftState) && isPressed(pushState) ) {
     showMenu(CONFIG_MODE);
     state_config = CONFIG_MODE;
@@ -553,6 +387,7 @@ void My_delay(int Time)
   _previousMillis = _currentMillis; 
 }
 
+/// Set display fonts
 void setFontSize(int fsize)
 {
   switch(fsize)
@@ -572,6 +407,7 @@ void setFontSize(int fsize)
   }
   return;
 }
+
 // Show message 
 void showInfoMessage(String  msg, int pos)
 {
@@ -609,10 +445,11 @@ void showMenu(int item)
 void showMenuItems(std::vector<std::string> menu, int item)
 {
   int n_menu=menu.size();
+  int n_start = max(item - MAX_NUM_LIST +1, 0);
   // show Mouse Menu
   setFontSize(9);
-  for(int i=0; i < n_menu && i < 7;i++){
-    drawTextMsg(menu[i].c_str(), i+1, (item == i), 0);
+  for(int i=0; i < n_menu && i < MAX_NUM_LIST;i++){
+    drawTextMsg(menu[i+n_start].c_str(), i+1, (item == (i+n_start)), 0);
  }
  return;
 }
@@ -633,7 +470,6 @@ void showMenuItems2(std::vector<std::string> menu, int item, int start_y, int ma
  }
  return;
 }
-   
    
 void drawTextMsg(String msg, int y, int flag, int fsize)
 {
@@ -656,7 +492,7 @@ void drawTextMsg2(String msg, int x, int y, int flag)
   spr.drawString(msg, 20+x*12, 40+y*20);
 }
 
-/*---- for Mouse ----*/
+/*---- for Mouse Mode ----*/
 void updateButtonEvents()
 {
   // read the button state:
@@ -707,7 +543,7 @@ void procMouseButton()
   return;  
 }
 
-/* --- for Keyboard ---*/
+/* --- for Keyboard Mode ---*/
 int checkSdCard(int timeout)
 {
   int count=0;
@@ -722,7 +558,21 @@ int checkSdCard(int timeout)
   }
   return 0;
 }
- 
+
+void parseMessageEntry(std::string item_buf)
+{
+  auto separator2 = std::string("\t");
+  auto pos2 = item_buf.find(separator2, 0);
+  if(pos2 == std::string::npos){ 
+    msg_list.push_back(item_buf);
+    msg_item_list.push_back(item_buf);
+  }else{
+    msg_item_list.push_back(item_buf.substr(0, pos2));
+    msg_list.push_back(item_buf.substr(pos2+1));
+  }
+  return;
+}
+
 void readMessageFile(char *fname)
 {
   std::string msg_buf;
@@ -733,41 +583,25 @@ void readMessageFile(char *fname)
         msg_buf += myFile.read();
       }
     }
+
+    // parse string
     if (msg_buf.length() > 0){
       auto separator = std::string("\n");
-      auto separator2 = std::string("\t");
       auto separator_length = separator.length();
       auto offset = std::string::size_type(0);
       nlist = 0;
-      std::string item_buf;
-
+      
       while (1) {
         auto pos = msg_buf.find(separator, offset);
         if (pos == std::string::npos) {
           if(msg_buf.substr(offset).length() > 0){
-            item_buf = msg_buf.substr(offset);
-            auto pos2 = item_buf.find(separator2,0);
-            if(pos2 == std::string::npos){ 
-              msg_list.push_back(item_buf);
-              msg_item_list.push_back(item_buf);
-            }else{
-              msg_item_list.push_back(item_buf.substr(0, pos2));
-              msg_list.push_back(item_buf.substr(pos2+1));
-            }
+            parseMessageEntry(msg_buf.substr(offset));
+
             nlist += 1;
           }
           break;
         }
-
-        item_buf = msg_buf.substr(offset, pos - offset);
-        auto pos2 = item_buf.find(separator2, 0);
-        if(pos2 == std::string::npos){ 
-          msg_list.push_back(item_buf);
-          msg_item_list.push_back(item_buf);
-        }else{
-          msg_item_list.push_back(item_buf.substr(0, pos2));
-          msg_list.push_back(item_buf.substr(pos2+1));
-        }
+        parseMessageEntry(msg_buf.substr(offset, pos - offset));
         offset = pos + separator_length;
         nlist += 1;
       }
@@ -781,48 +615,27 @@ void readMessageFile(char *fname)
 } 
 
 /*
- * Check Special Key
+ * Check Special Key:
+ * -- JP keylayout--
+ *   HID_KEYBOARD_INTERNATIONAL1|MOD_LEFT_SHIFT,   // 135(0x87) - Unused
+ *   HID_KEYBOARD_INTERNATIONAL3|MOD_LEFT_SHIFT,   // 136(0x88) - Unused
+ *   HID_KEYBOARD_INTERNATIONAL3,                  // 137(0x89) - Unused
+ *   KEY_LANG5,                                    // 138(0x8a) - Unused
+ *   KEY_TILDE|MOD_LEFT_ALT,                       // 139(0x8b) - Unused
  */
 int PressSpecialJpKey(unsigned char ch)
 {
   uint8_t chval = ch;
-    if (ch == 0x89){ // Backslash
-      //Keyboard.writeRaw(chval, 0);
-      Keyboard.write(KeyboardKeycode(0x89));
-      return 1;
-
-    }else if (ch == 0x87){ // Under score
-      //Keyboard.writeRaw((uint8_t)0x87, (uint8_t)0x02);
-      Keyboard.write(0x87);
-      return 1;
-    }else if (ch == 0x88 ){  // 0x88 Pipe
-      //Keyboard.writeRaw((uint8_t)ch, 0);
-      Keyboard.write(0x88);
-      return 1;
-      
-    }else if (ch == 0x8a){
-      //Keyboard.writeRaw((uint8_t)0x89, (uint8_t)0x02);
-      Keyboard.write(KeyboardKeycode(0x94));
-      
-      return 1;
-    }else if (ch == 0x8b){
-      //Keyboard.writeRaw((uint8_t)0x89, (uint8_t)0x02);
-      Keyboard.write(0x8b);
-      return 1;
-
-    }else{
-      //Keyboard.write(KeyboardKeycode(chval));
-      //Keyboard.writeRaw((uint8_t)ch, 0);
-      return 0;
-      
-    }
-    return 0;
+  if(ch >= 0x87 && ch <= 0x8b){
+    Keyboard.write(ch);
+    return 1;
+  }
+  return 0;
 }
 
 /*
  * Function key
  */
- 
 int CheckFuncKey(char *buf, int size)
 {
   if(size < 3)  return -1;
@@ -881,8 +694,7 @@ int CheckFuncKey(char *buf, int size)
             return -1;
         }
       }
-      if(buf[2] == 0x32){
-        
+      if(buf[2] == 0x32){     
         switch(buf[3]){
           case 0x30:
             return KEY_F9;
@@ -962,7 +774,7 @@ int CheckMouseVal(char *buf, int len)
 }
 
 /*
- * 
+ * output string
  */
 void outputString(std::string buf)
 {
@@ -972,7 +784,6 @@ void outputString(std::string buf)
   responseDelay = 100;
   return;
 }
-
 
 #define P_ZERO  -128  
 /*
@@ -1019,8 +830,8 @@ void procMultiBytesEvent(char *buf, int len)
   return;
 }
 
-#if FOODLY
-/*--------- Rotation -------------*/
+#if 0
+//---- for 3-axis acceleromater
 float rad2deg(float v){
   return v * 180/M_PI;
 }
@@ -1043,9 +854,11 @@ float correct_pitch(float pitch, float acc[3])
   return -pitch;
 }
 
-void get_angle_from_acc(float acc[3], float *roll, float *pitch)
+void get_angle_from_acc(float *roll, float *pitch)
 {
   float r,p;
+  float acc[3];
+  accelerometer.getAcceleration(&acc[0], &acc[1], &acc[2]);
   p = atan2( -acc[0], sqrt(acc[1]*acc[1]+acc[2]*acc[2])); 
   r = atan2( acc[1], acc[2]);
   *roll = rad2deg(conv_normal(r+M_PI));
