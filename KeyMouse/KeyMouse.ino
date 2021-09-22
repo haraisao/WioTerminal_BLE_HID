@@ -51,12 +51,20 @@ const int mouseBttonMiddle  = BUTTON_2;
 const int mouseButtonLeft   = BUTTON_3;
 
 // output range of X or Y movement; affects movement speed          
-int range = 10;
+int g_range = 20;
 
 // for mode
+enum mode_name{
+  MOUSE_MODE=0, KEYIN_MODE, KEYIN_JP_MODE,
+  KEYPAD_MODE, KEYPAD_JP_MODE,
+  CONFIG_MODE
+};
+auto menu_list = str_list();
 int state_config = 0;
 int selected_mode = MOUSE_MODE;
 
+
+#if BLE_SERVER
 /*----------- BLE Service Callbacks ------------------*/
 // BLE Service
 BLEServer *pServer = NULL;
@@ -96,106 +104,9 @@ class BleKeyEventCallback: public BLECharacteristicCallbacks {
   }
 };
 
-
-/************** Hardware Events ****************************/
-// INPUT_PULLUP Mode
-bool isPressed(int x){
-  return (x == LOW);
-}
-
-/// for 5 states joystick of WioTerminal
-enum button_state{
-  NONE_STATE=-1, LEFT_STATE=0, RIGHT_STATE, DOWN_STATE, UP_STATE, PUSH_STATE
-};
-
-int get_joystick_state()
+//
+void setup_BLE_server()
 {
-  if (  isPressed(leftState) ) {
-    return LEFT_STATE;
-  }else if (  isPressed(downState) ) {
-   return DOWN_STATE;
-  }else if (  isPressed(upState) ) {
-    return UP_STATE;
-  }else if (  isPressed(rightState) ) {
-    return RIGHT_STATE; 
-  }else  if ( isPressed(pushState) ) {
-     return PUSH_STATE;
-  }else{
-     return NONE_STATE;
-  }
-}
-
-//  for Upper buttons
-#define LEFT_BUTTON     0x01
-#define MIDDLE_BUTTON   0x02
-#define RIGHT_BUTTON    0x04
-unsigned char get_button_state()
-{
-  unsigned char res = 0;
-  if (  isPressed(buttonLeftState) ) { res = res | LEFT_BUTTON; }
-  if (  isPressed(buttonMiddleState) ) {res = res | MIDDLE_BUTTON; }
-  if (  isPressed(buttonRightState) ) { res = res | RIGHT_BUTTON; }
-  return res;
-}
-
-/* Default messages */
-static const char *ble_state_str[] = { "[[ BLE Disconnected ]]", "[[ BLE Connected ]]" };
-
-//// for SD card message file
-char msg_file[] = "message.txt"; 
-int ready_sd = 0;
-auto msg_item_list = std::vector<std::string>();
-auto msg_list = std::vector<std::string>();
-auto menu_list = std::vector<std::string>();
-
-int selected_node = 0;
-int nlist = 0;
-int selected_page = 0;
-int npage = 1;
-
-#if 0
-/// for 3-axis acceleromater inside WioTerminal
-LIS3DHTR<TwoWire> accelerometer;
-#endif
-
-/////////////////////////////// Initialize
-void setup() {
-  // initialize the buttons' inputs:
-  pinMode(upButton,         INPUT);
-  pinMode(downButton,       INPUT);
-  pinMode(leftButton,       INPUT);
-  pinMode(rightButton,      INPUT);
-  pinMode(pushButton,       INPUT);
-  
-  pinMode(mouseButtonLeft,  INPUT);
-  pinMode(mouseBttonMiddle, INPUT);
-  pinMode(mouseBttonRight,  INPUT);
-
-  // Initialize Display
-  tft.begin();
-  tft.init();
-  tft.setRotation(3);
-  tft.fillScreen(TFT_BLACK);
- 
-  // Create Sprite
-   spr.fillSprite(TFT_BLACK);
-   spr.createSprite(240, 200);
-
-  // SD Card
-  ready_sd = checkSdCard(3);
-  readMessageFile(msg_file);
-  if (nlist > 7) { nlist=7; }
-
-  // Menu
-  menu_list.push_back("Mouse mode");
-  menu_list.push_back("Keyboard mode");
-
-  // initialize mouse control:
-  Mouse.begin();
-
-  // initalize Keyboard
-  Keyboard.begin();
-  
   //-------- Initialize BLE for remote keyboard
   BLEDevice::init("Remote Keyboard Service");
  
@@ -224,15 +135,161 @@ void setup() {
  
   // Start advertising
   pServer->getAdvertising()->start();
+}
+#endif
 
-#if 0
+/************** Hardware Events ****************************/
+// INPUT_PULLUP Mode
+bool isPressed(int x){
+  return (x == LOW);
+}
+
+/// for 5 states joystick of WioTerminal
+enum button_state{
+  NONE_STATE=-1, 
+  UP_STATE=0x41, DOWN_STATE, RIGHT_STATE, LEFT_STATE,
+  PUSH_STATE=0x51
+};
+
+int g_joystick_state = NONE_STATE;
+int get_joystick_state()
+{
+  if (  isPressed(leftState) ) {
+    return LEFT_STATE;
+  }else if (  isPressed(downState) ) {
+   return DOWN_STATE;
+  }else if (  isPressed(upState) ) {
+    return UP_STATE;
+  }else if (  isPressed(rightState) ) {
+    return RIGHT_STATE; 
+  }else  if ( isPressed(pushState) ) {
+     return PUSH_STATE;
+  }else{
+     return NONE_STATE;
+  }
+}
+
+//  for Upper buttons
+#define NONE_BUTTON     0x00
+#define LEFT_BUTTON     0x01
+#define MIDDLE_BUTTON   0x02
+#define RIGHT_BUTTON    0x04
+#define LEFT_MIDDLE_BUTTON  (LEFT_BUTTON | MIDDLE_BUTTON)
+
+uint8_t g_button_state = 0;
+void get_button_state()
+{
+  g_button_state = NONE_BUTTON;
+  if (isPressed(buttonLeftState)  ){ g_button_state = g_button_state | LEFT_BUTTON; }
+  if (isPressed(buttonMiddleState)){ g_button_state = g_button_state | MIDDLE_BUTTON; }
+  if (isPressed(buttonRightState) ){ g_button_state = g_button_state | RIGHT_BUTTON; }
+  return;
+}
+
+/* Default messages */
+static const char *ble_state_str[] = { "[[ BLE Disconnected ]]", "[[ BLE Connected ]]" };
+
+//// for SD card message file
+char msg_file[] = "message.txt"; 
+int ready_sd = 0;
+auto msg_item_list = str_list();
+auto msg_list = str_list();
+
+char msg_jp_file[] = "message_jp.txt"; 
+auto msg_jp_item_list = str_list();
+auto msg_jp_list = str_list();
+
+#define KEYPAD_RAW 4
+#define KEYPAD_COLUMN 8
+static const char key_buttons[KEYPAD_RAW][KEYPAD_COLUMN]= {
+  {'@','A','B','C','D','E', 'F','G'},
+  {'H','I','J','K','L','M', 'N','O'},
+  {'P','Q','R','S','T','U', 'V','W'},
+  {'X','Y','Z','[','\\',']','^','_'}
+};
+
+int selected_node = 0;
+int nlist = 0;
+int selected_page = 0;
+int npage = 1;
+
+int sel_x = 0;
+int sel_y = 0;
+
+#if ACCELOMATER
+/// for 3-axis acceleromater inside WioTerminal
+LIS3DHTR<TwoWire> accelerometer;
+#endif
+
+std::map<char, char> E2J = {
+    {'"', '@'}, {'&', '^'}, {'\'', '&'}, {'(', '*'}, { ')', '('}, 
+    {'=', '_'}, {'^', '='}, {'~',  '+'}, {'@', '['}, { '`', '{'},
+    {'[', ']'}, {'{', '}'}, {'+',  ':'}, {':', '\''}, {'*', '"'},
+    {']', '\\'},{'}', '|'}, {'\\', 0x89},{'|', 0x88}, {'_', 0x87}};
+
+std::map<int, KeyboardKeycode> KeyArrow = { { UP_STATE, KEY_UP_ARROW },
+    { DOWN_STATE, KEY_DOWN_ARROW }, { LEFT_STATE, KEY_LEFT_ARROW },
+    { RIGHT_STATE, KEY_RIGHT_ARROW }};
+
+std::map<char, KeyboardKeycode> KeyPad ={
+    {'e',KEY_ENTER}, {'u',KEY_UP_ARROW}, {'d',KEY_DOWN_ARROW},
+    {'l',KEY_LEFT_ARROW},{'r',KEY_RIGHT_ARROW},{'b',KEY_BACKSPACE}};  
+    
+/////////////////////////////// Initialize
+void setup() {
+  // initialize the buttons' inputs:
+  pinMode(upButton,         INPUT);
+  pinMode(downButton,       INPUT);
+  pinMode(leftButton,       INPUT);
+  pinMode(rightButton,      INPUT);
+  pinMode(pushButton,       INPUT);
+  
+  pinMode(mouseButtonLeft,  INPUT);
+  pinMode(mouseBttonMiddle, INPUT);
+  pinMode(mouseBttonRight,  INPUT);
+  
+  // Initialize Display
+  tft.begin();
+  tft.init();
+  tft.setRotation(3);
+  tft.fillScreen(TFT_BLACK);
+ 
+  // Create Sprite
+   spr.fillSprite(TFT_BLACK);
+   //spr.createSprite(TFT_HEIGHT, TFT_WIDTH);
+   spr.createSprite(280, 200);
+
+  // Menu, 
+  menu_list.push_back("Mouse mode");
+  menu_list.push_back("KeyIn mode");
+  menu_list.push_back("KeyIn(JP) mode");
+  menu_list.push_back("KeyPad mode");
+  menu_list.push_back("KeyPad(JP) mode");
+  
+  // initialize mouse control:
+  Mouse.begin();
+
+  // initalize Keyboard
+  Keyboard.begin();
+
+#if BLE_SERVER
+  //-------- Initialize BLE for remote keyboard
+  setup_BLE_server();
+#endif
+
+#if ACCELOMATER
   //------ Setup 3-axis accelerometer
   accelerometer.begin(Wire1);
   accelerometer.setOutputDataRate(LIS3DHTR_DATARATE_25HZ); 
   accelerometer.setFullScaleRange(LIS3DHTR_RANGE_2G);
 #endif
-}
 
+  // SD Card
+  ready_sd = checkSdCard(3);
+  readMessageFile(msg_file, msg_list, msg_item_list);
+  //readMessageFile(msg_jp_file, msg_jp_list, msg_jp_item_list);
+
+}
 
 ///////////////////////////////// Main Loop
 void loop() {
@@ -241,109 +298,119 @@ void loop() {
   updateButtonEvents();
 
   // calculate the movement distance based on the button states:
-  int xDistance = (leftState - rightState) * range;
-  int yDistance = (upState   - downState)  * range;
+  int xDistance = (leftState - rightState);
+  int yDistance = (upState   - downState);
 
-  unsigned char button_state = get_button_state();
-  int joystick_state = get_joystick_state();
+  g_joystick_state = get_joystick_state();
+  char ch;
 
+  get_button_state();
   responseDelay = 5;
+
+  /////----- for all mode 
+  if (g_button_state == (LEFT_BUTTON | RIGHT_BUTTON) )
+  {
+    showMenu(CONFIG_MODE);
+    state_config = CONFIG_MODE;
+    responseDelay = 100;
+  }
 
   //// Mode Operations
   if (state_config == MOUSE_MODE){
     /*------------------Mouse Move--------------------------------------*/
     // if X or Y is non-zero, move:
-    if ( ( (xDistance != 0) || (yDistance != 0)) ) {
-      Mouse.move(xDistance, yDistance, 0);
+    if( g_button_state == LEFT_BUTTON  ){
+      if(ArrowKeyPress() == 0){ ArrowFuncPress(); }
+      responseDelay = 150;
+    }else if( g_button_state == LEFT_MIDDLE_BUTTON ){
+      ArrowFuncPress();
+      responseDelay = 150;
+    }else{
+      Mouse.move(xDistance * g_range, yDistance * g_range, 0);
+      procMouseButton();
     }
-    
-    procMouseButton();
-    
+
     /*----- Show message --------*/
     showTitle("Mouse & keyboard:", 0);
-    
-    drawTextMsg(ble_state_str[deviceConnected], 0, 0, 9);
     flushDisplay();
-    
-    sprintf(msg, "Mouse speed: %d, Keyin: %s(%d)\n", range, rxValue.c_str(), rxValue.size());
+    sprintf(msg, "Sp:%d, Key:%s(%d) %d, %d\n", 
+        g_range, rxValue.c_str(), rxValue.size(),
+        g_button_state, responseDelay);
     showInfoMessage(msg, 0); 
-    
-  } else if (state_config  == KEYBOARD_MODE) { 
-    //// Keyboard Mode (disable joystick mouse)
+
+  } else if (state_config  == KEYIN_MODE 
+          || state_config  == KEYIN_JP_MODE ) {  
+    //// KeyIn Mode (disable joystick mouse)
     responseDelay = 0;
 
-    if(button_state == LEFT_BUTTON  ){
-      switch(joystick_state){
-        case UP_STATE:
-          Keyboard.write(KEY_UP_ARROW);
-          break;
-        case DOWN_STATE:
-          Keyboard.write(KEY_DOWN_ARROW);
-          break;
-        case LEFT_STATE:
-          Keyboard.write(KEY_LEFT_ARROW);
-          break;
-        case RIGHT_STATE:
-          Keyboard.write(KEY_RIGHT_ARROW);
-          break;          
-      }
-
+    if( g_button_state == LEFT_BUTTON  ){
+      ArrowKeyPress();
+    }else if(g_button_state == LEFT_MIDDLE_BUTTON ){
+      ArrowFuncPress();
     }else {
-      switch(joystick_state){
+      switch(g_joystick_state){
         case PUSH_STATE:
-           if(msg_list.size() > selected_node){
-             outputString(msg_list[selected_node]+"\n");
-           }else{
-             outputString("\n");
-           }
-           break;
-           
-        case LEFT_STATE:
-           Keyboard.write(KEY_BACKSPACE);
-           break;
-           
-        case RIGHT_STATE:
-           outputString(" ");
-           break;
-           
-        case UP_STATE:
-        case DOWN_STATE:
-            selected_node += yDistance/2;
-            if (selected_node < 0)    { selected_node = 0;    }
-            if (selected_node > nlist){ selected_node = nlist; }
-           break;
+          outputString(msg_list[selected_node]);
+          break;
+        default:
+          selected_node = selectListItem(selected_node, yDistance, nlist);
+          break;
       }
     }
-
     /*------- Display ----*/
     showTitle("Keyboard Mode", 0);
-    drawTextMsg(ble_state_str[deviceConnected], 0, 0, 9);
-  
-    // show string list
     showMenuItems(msg_item_list, selected_node);
-    //drawTextMsg("=[CR]=", nlist+1,  (selected_node == nlist), 0);
+    flushDisplay();
+    if (ready_sd == 0){   sprintf(msg, " No SD card");        }
+    else{                 sprintf(msg, "File: %s", msg_file); }
+    showInfoMessage(msg, 0);
+ 
+    responseDelay += 120;
+    
+  } else if (state_config == KEYPAD_MODE 
+          || state_config == KEYPAD_JP_MODE){
+    ////--- KeyPad mode (simple keyboard, ASCII code table)
+    if(g_button_state == LEFT_BUTTON ){
+      if(ArrowKeyPress() == 0){
+        ArrowFuncPress();
+      }
+    }else{
+      switch(g_joystick_state){
+        case PUSH_STATE:
+          ch = key_buttons[sel_y][sel_x];
+          if (g_button_state == MIDDLE_BUTTON){ ch -= 0x20; }
+          else if (g_button_state == RIGHT_BUTTON){ ch += 0x20; } 
+          if( state_config  == KEYPAD_JP_MODE && E2J[ch]){ ch = E2J[ch]; }
+          Keyboard.write(ch);
+          break;
+ 
+        default:
+          if(g_button_state == LEFT_MIDDLE_BUTTON ){ ArrowFuncPress(); }
+          else{
+            sel_x = selectListItem(sel_x, xDistance, KEYPAD_COLUMN);
+            sel_y = selectListItem(sel_y, yDistance, KEYPAD_RAW);
+          }
+          break;
+      }
+    }
+    //--- Display
+    showTitle("Keytype Mode", 0);
+    displayKeypad(sel_x, sel_y);
     flushDisplay();
 
-    if (ready_sd == 0){
-      sprintf(msg, " No SD card");
-    }else{
-      sprintf(msg, "File: %s", msg_file);
-    }
-    showInfoMessage(msg,0);
-    responseDelay += 120;
-
-
+    responseDelay = 120;
+    
   } else if (state_config == CONFIG_MODE) {
     //// Configuration Mode
-    selected_node = 0;
-    if (  isPressed(pushState) ) {
-      state_config = selected_mode;
-      Mouse.release(MOUSE_LEFT);
-    }else{
-      selected_mode += yDistance/2;
-      if (selected_mode < MOUSE_MODE)   { selected_mode = MOUSE_MODE;    }
-      if (selected_mode >= CONFIG_MODE){ selected_mode = CONFIG_MODE -1; }
-    }
+    switch(g_joystick_state){
+        case PUSH_STATE:
+          state_config = selected_mode;
+          break;
+        default:
+          selected_mode = selectListItem(selected_mode, yDistance, menu_list.size());
+          break;
+    } 
+
     // show Mouse Menu
     showMenu(selected_mode);
     sprintf(msg, "Selected: %d , %d\n", selected_mode, yDistance);
@@ -351,25 +418,19 @@ void loop() {
     responseDelay = 120;
   }
   
-  /////----- for all mode 
-  if (isPressed(buttonLeftState) && isPressed(pushState) ) {
-    showMenu(CONFIG_MODE);
-    state_config = CONFIG_MODE;
-    responseDelay = 100;
-  }
-  
+#if BLE_SERVER
   /*---------- BLE connection -------*/
-    // disconnecting
-    if (!deviceConnected && oldDeviceConnected) {
-        delay(500);                  // give the bluetooth stack the chance to get things ready
-        pServer->startAdvertising(); // restart advertising
-        oldDeviceConnected = deviceConnected;
-    }
-    // connecting
-    if (deviceConnected && !oldDeviceConnected) {
-       oldDeviceConnected = deviceConnected;
-    }
-    
+  // disconnecting
+  if (!deviceConnected && oldDeviceConnected) {
+      delay(500);                  // give the bluetooth stack the chance to get things ready
+      pServer->startAdvertising(); // restart advertising
+      oldDeviceConnected = deviceConnected;
+  }
+  // connecting
+  if (deviceConnected && !oldDeviceConnected) {
+     oldDeviceConnected = deviceConnected;
+  }
+#endif
   /*-----------------------------------------------------------------*/ 
   // a delay so the mouse doesn't move too fast:
   My_delay(responseDelay);
@@ -428,6 +489,10 @@ void showTitle(String  msg, int fl)
   if (fl == 1){
     spr.pushSprite(0, 0);
   }
+#if BLE_SERVER
+  drawTextMsg(ble_state_str[deviceConnected], 0, 0, 9);
+#endif
+  return;
 }
 
 void flushDisplay()
@@ -442,6 +507,10 @@ void showMenu(int item)
   flushDisplay();
 }
 
+int selectListItem(int sel, int dist, int n_list){;
+  return min(max(sel+dist, 0), n_list -1);
+}
+
 void showMenuItems(std::vector<std::string> menu, int item)
 {
   int n_menu=menu.size();
@@ -454,23 +523,7 @@ void showMenuItems(std::vector<std::string> menu, int item)
  return;
 }
 
-void showMenuItems2(std::vector<std::string> menu, int item, int start_y, int max_w)
-{
-  int n_menu=menu.size();
-  setFontSize(9);
-  int x = 0;
-  int y = start_y;
-  for(int i=0; i < n_menu ;i++){
-    drawTextMsg2(menu[i].c_str(), x , y, (item == i));
-    x += menu[i].length()+1;
-    if (x > max_w){
-      x = 0;
-      y += 1;
-    }
- }
- return;
-}
-   
+
 void drawTextMsg(String msg, int y, int flag, int fsize)
 {
   if (flag){
@@ -484,14 +537,34 @@ void drawTextMsg(String msg, int y, int flag, int fsize)
 
 void drawTextMsg2(String msg, int x, int y, int flag)
 {
+  int x_step=24;
+  int y_step=24;
   if (flag){
     spr.setTextColor(TFT_BLACK, TFT_WHITE);
   }else{
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
   }
-  spr.drawString(msg, 20+x*12, 40+y*20);
+  spr.drawString(msg, 40+x*x_step, 42+y*y_step);
 }
 
+void displayKeypad(int sel_x, int sel_y)
+{
+  char ch;
+  setFontSize(12);
+  for(int j=0; j< KEYPAD_RAW; j++){
+    for(int i=0; i< KEYPAD_COLUMN; i++){
+      ch=key_buttons[j][i];
+      if (g_button_state == MIDDLE_BUTTON){
+        ch -= 0x20;
+      }else if (g_button_state == RIGHT_BUTTON){
+        ch += 0x20;
+      }
+      if(ch <0x20 || ch>0x7e){ ch=' '; }     
+      drawTextMsg2(String((char)ch), i, j+2, ((sel_x==i) && (sel_y==j)));
+    }
+  }
+  return;
+}
 /*---- for Mouse Mode ----*/
 void updateButtonEvents()
 {
@@ -511,23 +584,31 @@ void updateButtonEvents()
 void procMouseButton()
 {
   /*-------------Mouse Config Button  Click--------------------------*/
-  if (isPressed(buttonLeftState) ) { range = 2; }else{ range = 20; }
+  if(g_button_state == MIDDLE_BUTTON && g_joystick_state == PUSH_STATE){
+    if(g_range == 20){ g_range = 2; }else{ g_range = 20; }
+    responseDelay=250;
+    return;
+  }
     
   /*-------------Mouse Button Left Click---------------------------*/
-  if (isPressed(buttonMiddleState) && isPressed(buttonLeftState)) {
+  if (g_button_state == LEFT_MIDDLE_BUTTON )
+  {
     Mouse.release(MOUSE_LEFT);  
-    if ( isPressed(upState) ){           // Scroll Up
+    if ( g_joystick_state == UP_STATE ){           // Scroll Up
       Mouse.move(0, 0, 1);
-      responseDelay = 100;
-    }else if ( isPressed(downState) ) {  // Scroll Down
+    }else if ( g_joystick_state == DOWN_STATE ) {  // Scroll Down
       Mouse.move(0, 0, -1);
-      responseDelay = 100;
     }
-      
+    responseDelay = 100;
+    return;
+    
   } else {
     // if the mouse button left is pressed:
-    if (isPressed(buttonMiddleState) || isPressed(pushState) ) {
+    if (g_button_state == NONE_BUTTON && g_joystick_state == PUSH_STATE )
+    {
       if (!Mouse.isPressed(MOUSE_LEFT)) { Mouse.press(MOUSE_LEFT); }
+      responseDelay = 100;
+      return;
     } else { 
       if (Mouse.isPressed(MOUSE_LEFT))  { Mouse.release(MOUSE_LEFT); }
     }
@@ -535,15 +616,19 @@ void procMouseButton()
   
   /*-------------Mouse Button Right Click-----------------------------*/
   // if the mouse button right is pressed:
-  if (isPressed(buttonRightState) ) {
+  if (g_button_state == RIGHT_BUTTON)
+  {
     if (!Mouse.isPressed(MOUSE_RIGHT)) { Mouse.press(MOUSE_RIGHT); }
+    responseDelay=100;
   } else {
     if (Mouse.isPressed(MOUSE_RIGHT))  { Mouse.release(MOUSE_RIGHT); }
   }
+
   return;  
 }
 
 /* --- for Keyboard Mode ---*/
+////------ read SD card ----------------
 int checkSdCard(int timeout)
 {
   int count=0;
@@ -559,21 +644,22 @@ int checkSdCard(int timeout)
   return 0;
 }
 
-void parseMessageEntry(std::string item_buf)
+
+void parseMessageEntry(std::string item_buf, str_list& list, str_list& item_list)
 {
   auto separator2 = std::string("\t");
   auto pos2 = item_buf.find(separator2, 0);
   if(pos2 == std::string::npos){ 
-    msg_list.push_back(item_buf);
-    msg_item_list.push_back(item_buf);
+    list.push_back(item_buf);
+    item_list.push_back(item_buf);
   }else{
-    msg_item_list.push_back(item_buf.substr(0, pos2));
-    msg_list.push_back(item_buf.substr(pos2+1));
+    item_list.push_back(item_buf.substr(0, pos2));
+    list.push_back(item_buf.substr(pos2+1));
   }
   return;
 }
 
-void readMessageFile(char *fname)
+void readMessageFile(char *fname, str_list& list, str_list& item_list)
 {
   std::string msg_buf;
   if (ready_sd){
@@ -595,25 +681,48 @@ void readMessageFile(char *fname)
         auto pos = msg_buf.find(separator, offset);
         if (pos == std::string::npos) {
           if(msg_buf.substr(offset).length() > 0){
-            parseMessageEntry(msg_buf.substr(offset));
-
+            parseMessageEntry(msg_buf.substr(offset), list, item_list);
             nlist += 1;
           }
           break;
         }
-        parseMessageEntry(msg_buf.substr(offset, pos - offset));
+        parseMessageEntry(msg_buf.substr(offset, pos - offset), list, item_list);
         offset = pos + separator_length;
         nlist += 1;
       }
-    }else{
-      msg_list.push_back("");
-      msg_item_list.push_back("---");
-      nlist=1;
     }
   }
   return;
 } 
+////------ read SD card :END----------------
+///--- Joystick event process
+int ArrowKeyPress()
+{
+  if (KeyArrow[g_joystick_state]){
+     Keyboard.write(KeyArrow[g_joystick_state]);
+     return 1;
+  }
+  return 0;
+}
 
+int ArrowFuncPress(){
+  switch(g_joystick_state){
+    case PUSH_STATE:
+      Keyboard.write(KEY_ENTER);
+      break;
+    case LEFT_STATE:
+      Keyboard.write(KEY_BACKSPACE);
+      break;
+    case RIGHT_STATE:
+      outputString(" ");
+      break;
+    default:
+      return 0;
+  }
+  return 1;
+}
+
+////----- Key Press
 /*
  * Check Special Key:
  * -- JP keylayout--
@@ -759,6 +868,8 @@ void KeyPress(unsigned char ch)
         break;
     }
 }
+///----------------
+
 
 /*
  * Check mouse event value
@@ -778,8 +889,13 @@ int CheckMouseVal(char *buf, int len)
  */
 void outputString(std::string buf)
 {
+  char ch;
   for(int i=0; i < buf.length(); i++){
-     Keyboard.write(buf[i]);
+    ch = buf[i];
+    if( state_config == KEYIN_JP_MODE){
+      if (E2J[buf[i]]){ ch = E2J[buf[i]]; }
+    }
+    Keyboard.write(ch);
   }
   responseDelay = 100;
   return;
@@ -830,7 +946,7 @@ void procMultiBytesEvent(char *buf, int len)
   return;
 }
 
-#if 0
+#if ACCELOMATER
 //---- for 3-axis acceleromater
 float rad2deg(float v){
   return v * 180/M_PI;

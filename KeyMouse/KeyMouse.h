@@ -2,34 +2,44 @@
  * Copyright(C) 2021 Isao Hara, All rights reserved.
  *  License: The MIT License
  */
-#include "rpcBLEDevice.h"
-#include <BLE2902.h>
+#define ACCELOMATER 0
+#define BLE_SERVER  1
+#define HID_PROJECT 1
+
+#include <map>
+#include <string>
 
 #include <TFT_eSPI.h>                 // Hardware-specific library
 #include <SPI.h>
 
+#if BLE_SERVER
+#include "rpcBLEDevice.h"
+#include <BLE2902.h>
+#endif
+
+#if ACCELOMATER
 #include"LIS3DHTR.h" 
+#endif
 
 #include "Seeed_FS.h"
 #include "SD/Seeed_SD.h"
 
-#if 1
-#define   HID_CUSTOM_LAYOUT
-#define   LAYOUT_JAPANESE
-//#define   LAYOUT_US_ENGLISH
-#include  "HID-Project.h"
+#if HID_PROJECT
+#  define   HID_CUSTOM_LAYOUT
+#  define   LAYOUT_JAPANESE
+#  include  "HID-Project.h"
 #else
-#include "Keyboard.h"
-#include "Mouse.h"
+#  include "Keyboard.h"
+#  include "Mouse.h"
+#  define KeyboardKeycode(n)  (n)
 #endif
-#define MOUSE_MODE      0
-#define KEYBOARD_MODE   1
-#define FOODLY_MODE     2
-#define CONFIG_MODE     3
-#define MENU_LEN        CONFIG_MODE + 1
 
 #define MAX_NUM_LIST    6
 
+#define str_list  std::vector<std::string>
+#define str_map   std::map<std::string, std::string>
+
+#if BLE_SERVER
 /*** BLE ****/
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -38,6 +48,8 @@
 /*--- BLE Service ----*/
 BLECharacteristic * pTxChara;
 BLECharacteristic * pRxChara;
+#endif
+
 // read buffer for TxCaracterristic
 std::string rxValue;
 
