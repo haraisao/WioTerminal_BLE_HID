@@ -230,11 +230,7 @@ std::map<char, char> E2J = {
 std::map<int, KeyboardKeycode> KeyArrow = { { UP_STATE, KEY_UP_ARROW },
     { DOWN_STATE, KEY_DOWN_ARROW }, { LEFT_STATE, KEY_LEFT_ARROW },
     { RIGHT_STATE, KEY_RIGHT_ARROW }};
-
-std::map<char, KeyboardKeycode> KeyPad ={
-    {'e',KEY_ENTER}, {'u',KEY_UP_ARROW}, {'d',KEY_DOWN_ARROW},
-    {'l',KEY_LEFT_ARROW},{'r',KEY_RIGHT_ARROW},{'b',KEY_BACKSPACE}};  
-    
+   
 /////////////////////////////// Initialize
 void setup() {
   // initialize the buttons' inputs:
@@ -381,7 +377,15 @@ void loop() {
           if (g_button_state == MIDDLE_BUTTON){ ch -= 0x20; }
           else if (g_button_state == RIGHT_BUTTON){ ch += 0x20; } 
           if( state_config  == KEYPAD_JP_MODE && E2J[ch]){ ch = E2J[ch]; }
-          Keyboard.write(ch);
+          if(ch == 0x7f){
+            Keyboard.press(KEY_LEFT_ALT);
+            Keyboard.press(KEY_LEFT_CTRL);
+            Keyboard.press(KEY_DELETE);
+            delay(20);
+            Keyboard.releaseAll();
+          }else{
+            Keyboard.write(ch);
+          }
           break;
  
         default:
@@ -559,8 +563,12 @@ void displayKeypad(int sel_x, int sel_y)
       }else if (g_button_state == RIGHT_BUTTON){
         ch += 0x20;
       }
-      if(ch <0x20 || ch>0x7e){ ch=' '; }     
-      drawTextMsg2(String((char)ch), i, j+2, ((sel_x==i) && (sel_y==j)));
+      if(ch <0x20 || ch>0x7f){ ch=' '; }
+      if(ch == 0x7f){
+        drawTextMsg2("Rst", i, j+2, ((sel_x==i) && (sel_y==j))); 
+      }else{
+        drawTextMsg2(String((char)ch), i, j+2, ((sel_x==i) && (sel_y==j)));
+      }
     }
   }
   return;
