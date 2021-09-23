@@ -50,9 +50,6 @@ const int mouseBttonRight   = BUTTON_1;
 const int mouseBttonMiddle  = BUTTON_2;
 const int mouseButtonLeft   = BUTTON_3;
 
-// output range of X or Y movement; affects movement speed          
-int g_range = 20;
-
 // for mode
 enum mode_name{
   MOUSE_MODE=0, KEYIN_MODE, KEYIN_JP_MODE,
@@ -175,6 +172,7 @@ int get_joystick_state()
 #define MIDDLE_BUTTON   0x02
 #define RIGHT_BUTTON    0x04
 #define LEFT_MIDDLE_BUTTON  (LEFT_BUTTON | MIDDLE_BUTTON)
+#define LEFT_RIGHT_BUTTON   (LEFT_BUTTON | RIGHT_BUTTON)
 
 uint8_t g_button_state = 0;
 void get_button_state()
@@ -186,6 +184,10 @@ void get_button_state()
   return;
 }
 
+// output range of X or Y movement; affects movement speed          
+int g_range = 20;
+
+
 /* Default messages */
 static const char *ble_state_str[] = { "[[ BLE Disconnected ]]", "[[ BLE Connected ]]" };
 
@@ -194,10 +196,6 @@ char msg_file[] = "message.txt";
 int ready_sd = 0;
 auto msg_item_list = str_list();
 auto msg_list = str_list();
-
-char msg_jp_file[] = "message_jp.txt"; 
-auto msg_jp_item_list = str_list();
-auto msg_jp_list = str_list();
 
 #define KEYPAD_RAW 4
 #define KEYPAD_COLUMN 8
@@ -210,8 +208,6 @@ static const char key_buttons[KEYPAD_RAW][KEYPAD_COLUMN]= {
 
 int selected_node = 0;
 int nlist = 0;
-int selected_page = 0;
-int npage = 1;
 
 int sel_x = 0;
 int sel_y = 0;
@@ -283,13 +279,12 @@ void setup() {
   // SD Card
   ready_sd = checkSdCard(3);
   readMessageFile(msg_file, msg_list, msg_item_list);
-  //readMessageFile(msg_jp_file, msg_jp_list, msg_jp_item_list);
-
 }
 
 ///////////////////////////////// Main Loop
 void loop() {
   char msg[25]="--------";  /// Message buffer
+  char ch;
   
   updateButtonEvents();
 
@@ -298,18 +293,11 @@ void loop() {
   int yDistance = (upState   - downState);
 
   g_joystick_state = get_joystick_state();
-  char ch;
-
   get_button_state();
   responseDelay = 5;
 
   /////----- for all mode 
-  if (g_button_state == (LEFT_BUTTON | RIGHT_BUTTON) )
-  {
-    showMenu(CONFIG_MODE);
-    state_config = CONFIG_MODE;
-    responseDelay = 100;
-  }
+  if (g_button_state == LEFT_RIGHT_BUTTON ){ state_config = CONFIG_MODE; }
 
   //// Mode Operations
   if (state_config == MOUSE_MODE){
@@ -337,8 +325,6 @@ void loop() {
   } else if (state_config  == KEYIN_MODE 
           || state_config  == KEYIN_JP_MODE ) {  
     //// KeyIn Mode (disable joystick mouse)
-    responseDelay = 0;
-
     if( g_button_state == LEFT_BUTTON  ){
       ArrowKeyPress();
     }else if(g_button_state == LEFT_MIDDLE_BUTTON ){
@@ -346,7 +332,7 @@ void loop() {
     }else {
       switch(g_joystick_state){
         case PUSH_STATE:
-          outputString(msg_list[selected_node]);
+          outputString(msg_list[selected_node]+'\n');
           break;
         default:
           selected_node = selectListItem(selected_node, yDistance, nlist);
@@ -367,25 +353,14 @@ void loop() {
           || state_config == KEYPAD_JP_MODE){
     ////--- KeyPad mode (simple keyboard, ASCII code table)
     if(g_button_state == LEFT_BUTTON ){
-      if(ArrowKeyPress() == 0){
-        ArrowFuncPress();
-      }
+      if(ArrowKeyPress() == 0){  ArrowFuncPress(); }
     }else{
       switch(g_joystick_state){
         case PUSH_STATE:
-          ch = key_buttons[sel_y][sel_x];
-          if (g_button_state == MIDDLE_BUTTON){ ch -= 0x20; }
-          else if (g_button_state == RIGHT_BUTTON){ ch += 0x20; } 
+          ch = getKeypadButton(sel_x, sel_y);
           if( state_config  == KEYPAD_JP_MODE && E2J[ch]){ ch = E2J[ch]; }
-          if(ch == 0x7f){
-            Keyboard.press(KEY_LEFT_ALT);
-            Keyboard.press(KEY_LEFT_CTRL);
-            Keyboard.press(KEY_DELETE);
-            delay(20);
-            Keyboard.releaseAll();
-          }else{
-            Keyboard.write(ch);
-          }
+          //--- send Key event
+          if(ch == 0x7f){ sendReset(); } else{ Keyboard.write(ch); }
           break;
  
         default:
@@ -401,7 +376,6 @@ void loop() {
     showTitle("Keytype Mode", 0);
     displayKeypad(sel_x, sel_y);
     flushDisplay();
-
     responseDelay = 120;
     
   } else if (state_config == CONFIG_MODE) {
@@ -411,12 +385,14 @@ void loop() {
           state_config = selected_mode;
           break;
         default:
-          selected_mode = selectListItem(selected_mode, yDistance, menu_list.size());
+          selected_mode = selectListItem(selected_mode, yDistance, CONFIG_MODE);
           break;
     } 
 
     // show Mouse Menu
-    showMenu(selected_mode);
+    showTitle("Configuration", 0);
+    showMenuItems(menu_list, selected_mode);
+    flushDisplay();
     sprintf(msg, "Selected: %d , %d\n", selected_mode, yDistance);
     showInfoMessage(msg, 0);
     responseDelay = 120;
@@ -503,13 +479,6 @@ void flushDisplay()
 {
    spr.pushSprite(0, 0);
 }
- 
-void showMenu(int item)
-{
-  showTitle("Menu", 0);
-  showMenuItems(menu_list, item);
-  flushDisplay();
-}
 
 int selectListItem(int sel, int dist, int n_list){;
   return min(max(sel+dist, 0), n_list -1);
@@ -551,19 +520,22 @@ void drawTextMsg2(String msg, int x, int y, int flag)
   spr.drawString(msg, 40+x*x_step, 42+y*y_step);
 }
 
+char getKeypadButton(int x, int y)
+{
+  char ch = key_buttons[y][x];
+  if (g_button_state == MIDDLE_BUTTON){ ch -= 0x20; }
+  else if (g_button_state == RIGHT_BUTTON){ ch += 0x20; }
+  if(ch <0x20 || ch>0x7f){ ch=' '; }
+  return ch;
+}
+         
 void displayKeypad(int sel_x, int sel_y)
 {
   char ch;
   setFontSize(12);
   for(int j=0; j< KEYPAD_RAW; j++){
     for(int i=0; i< KEYPAD_COLUMN; i++){
-      ch=key_buttons[j][i];
-      if (g_button_state == MIDDLE_BUTTON){
-        ch -= 0x20;
-      }else if (g_button_state == RIGHT_BUTTON){
-        ch += 0x20;
-      }
-      if(ch <0x20 || ch>0x7f){ ch=' '; }
+      ch = getKeypadButton(i, j);
       if(ch == 0x7f){
         drawTextMsg2("Rst", i, j+2, ((sel_x==i) && (sel_y==j))); 
       }else{
@@ -907,6 +879,16 @@ void outputString(std::string buf)
   }
   responseDelay = 100;
   return;
+}
+
+void sendReset()
+{
+  Keyboard.press(KEY_LEFT_ALT);
+  Keyboard.press(KEY_LEFT_CTRL);
+  Keyboard.press(KEY_DELETE);
+  delay(20);
+  Keyboard.releaseAll();
+  return; 
 }
 
 #define P_ZERO  -128  
